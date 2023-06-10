@@ -1,0 +1,12 @@
+version: "3"
+services:
+  fan:
+    build:
+      context: .
+      dockerfile: Containerfile
+    environment:
+      - ILO_HOSTNAME="change me to your ip/hostname"
+      - ILO_USERNAME="change me to your username"
+      - ILO_PASSWORD="chang me to your password"
+    ports:
+      - 8080:80

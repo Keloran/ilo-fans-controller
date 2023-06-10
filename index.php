@@ -3,7 +3,7 @@
 require 'config.inc.php';
 
 function get_presets() {
-	if (!file_exists('presets.json'))  // Return default presets if the file doesn't exist
+	if (!file_exists('presets.json')) { // Return default presets if the file doesn't exist
 		return [
 			[
 				'name' => 'Silent Mode',
@@ -18,16 +18,16 @@ function get_presets() {
 				'speeds' => [ 100 ],
 			]
 		];
-	else
+	} else {
 		return json_decode(file_get_contents('presets.json'), true);
+  }
 }
 
 function get_fans() {
-	global $ILO_HOST, $ILO_USERNAME, $ILO_PASSWORD;  // From config.inc.php
+  $config = new Config();
+	$curl_handle = curl_init(sprintf("https://%s/redfish/v1/chassis/1/Thermal", $config->getHostname()));
 
-	$curl_handle = curl_init("https://$ILO_HOST/redfish/v1/chassis/1/Thermal");
-
-	curl_setopt($curl_handle, CURLOPT_USERPWD, "$ILO_USERNAME:$ILO_PASSWORD");  // Authentication (Basic)
+	curl_setopt($curl_handle, CURLOPT_USERPWD, sprintf("%s:%s", $config->getUsername(), $config->getPassword()));  // Authentication (Basic)
 
 	// An attempt to speed up the request
 	// curl_setopt($curl_handle, CURLOPT_ENCODING, '');
@@ -44,15 +44,16 @@ function get_fans() {
 	$raw_ilo_data = curl_exec($curl_handle);
 
 	// Print errors if any
-	// echo curl_error($curl_handle);
-	// echo curl_errno($curl_handle);
+	#echo curl_error($curl_handle);
+	#echo curl_errno($curl_handle);
 
 	curl_close($curl_handle);
 
 	if ($raw_ilo_data) {  // If the request was successful
 		$fans = [];
-		foreach (json_decode($raw_ilo_data, true)['Fans'] as $fan)
+		foreach (json_decode($raw_ilo_data, true)['Fans'] as $fan) {
 			$fans[ $fan['FanName'] ] = $fan['CurrentReading'];
+    }
 	}
 
 	return $fans ?? [];
@@ -61,25 +62,32 @@ function get_fans() {
 if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 	$FANS = get_fans();
 
-	if (isset($_GET['api']) && $_GET['api'] == 'fans')  // Return fans in JSON format with ?api=fans
+	if (isset($_GET['api']) && $_GET['api'] == 'fans') { // Return fans in JSON format with ?api=fans
 		die(json_encode($FANS, JSON_PRETTY_PRINT));
+  }
 
 	$PRESETS = get_presets();
 
-	if (isset($_GET['api']) && $_GET['api'] == 'presets')  // Return presets in JSON format with ?api=presets
+	if (isset($_GET['api']) && $_GET['api'] == 'presets') { // Return presets in JSON format with ?api=presets
 		die(json_encode($PRESETS, JSON_PRETTY_PRINT));
+  }
 
-} else if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+  $config = new Config();
+
 	// Get POST JSON data from JS fetch()
 	$data = json_decode(file_get_contents('php://input'), true);
 
-	if (isset($data['action']))  // Check if the action key exists
-		if ($data['action'] === 'fans' || $data['action'] === 'presets')  // Check if the action is valid
+	if (isset($data['action'])) { // Check if the action key exists
+		if ($data['action'] === 'fans' || $data['action'] === 'presets') {  // Check if the action is valid
 			if ($data['action'] === 'fans' && isset($data['fans'])) {  // Set fans speeds
 				$FANS = get_fans();
 
-				if (is_int($data['fans']))  // Example: "fans": 50 - set all fans to 50%
+				if (is_int($data['fans'])) { // Example: "fans": 50 - set all fans to 50%
 					$data['fans'] = array_fill_keys(array_keys($FANS), $data['fans']);  // Fill the array with the same speeds
+        }
 
 				$updated = 0;
 				$connected = false;
@@ -89,8 +97,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						$fan_index = array_search($fan, array_keys($FANS));
 						if (($speed >= 10 && $speed <= 100) && $speed != $FANS[$fan]) {  // Check if the speed is valid and different from the current fan's speed
 							if (!$connected) {  // Connect to iLO (only once)
-								$ssh_handle = ssh2_connect($ILO_HOST, 22);
-								ssh2_auth_password($ssh_handle, $ILO_USERNAME, $ILO_PASSWORD);
+								$ssh_handle = ssh2_connect($config->getHostname(), 22);
+								ssh2_auth_password($ssh_handle, $config->getUsername(), $config->getPassword());
 								$connected = true;
 							}
 
@@ -104,15 +112,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
 							$updated++;
 						}
-					} else
+					} else {
 						die("Invalid fan name: $fan");
+          }
 				}
 
 				// Wait until the fans are set
-				if ($updated > 0)
-					do
+				if ($updated > 0) {
+					do {
 						$FANS = get_fans();
-					while ($FANS !== array_merge($FANS, $data['fans']));  // Wait until the fans are updated
+          } while ($FANS !== array_merge($FANS, $data['fans']));  // Wait until the fans are updated
+        }
 
 				die(json_encode($FANS, JSON_PRETTY_PRINT));
 			} else if ($data['action'] === 'presets' && isset($data['presets'])) {  // Save presets to presets.json
@@ -121,10 +131,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				die($raw_presets);
 			} else
 				die('Invalid request: missing "fans" or "presets" key.');
-		else
+		} else {
 			die('Invalid request: invalid "action" value.');
-	else
+    }
+	} else {
 		die('Invalid request: missing "action" key.');
+  }
 
 	// Catch edge cases
 	die('Invalid request.');
@@ -250,7 +262,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 			<div class="flex items-center justify-between mb-5 sm:mb-7">
 				<div x-data="{ showTooltip: false }" class="relative" @mouseover.away="showTooltip = false">
 					<a
-						href="https://<?php echo $ILO_HOST; ?>"
+						href="https://<?= (new Config())->getHostname(); ?>"
 						target="_blank"
 						@mouseenter="showTooltip = !showTooltip"
 					>
@@ -540,17 +552,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 				});
 
 				Alpine.store('fans', {
-					fans: <?php echo json_encode($FANS); ?>,  // Get the fans from the server
+					fans: <?= json_encode($FANS); ?>,  // Get the fans from the server
 
 					setSpeed(fan, rawSpeed) {
 						const speed = parseInt(rawSpeed);
 
-						if (speed >= 10 && speed <= 100)
-							if (Alpine.store('app').editAll)
-								for (const fan in this.fans)
+						if (speed >= 10 && speed <= 100) {
+							if (Alpine.store('app').editAll) {
+								for (const fan in this.fans) {
 									this.fans[fan] = speed;
-							else
+                }
+							} else {
 								this.fans[fan] = speed;
+              }
+            }
 						
 						Alpine.store('presets').detectPreset();  // FIXME: Not properly working
 					}
@@ -558,10 +573,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
 				Alpine.store('presets', {
 					currentPreset: null,
-					presets: <?php echo json_encode($PRESETS); ?>,  // Get the presets from the server
+					presets: <?= json_encode($PRESETS); ?>,  // Get the presets from the server
 
 					async updatePresets() {
-						const res = await fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
+            console.log(this.presets);
+						const res = await fetch('<?= $_SERVER['PHP_SELF']; ?>', {
 							method: 'POST',
 							body: JSON.stringify({ action: 'presets', presets: this.presets }),
 						});
@@ -577,14 +593,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 						const speeds = preset.speeds;
 						const fans = Alpine.store('fans').fans;
 
-						if (speeds.length === 1)  // Apply the same speed for all the fans
+						if (speeds.length === 1) {  // Apply the same speed for all the fans
 							Object.keys(fans).forEach(fan => {
 								fans[fan] = speeds[0];
 							});
-						else  // Apply the speed for each fan
+						} else {  // Apply the speed for each fan
 							Object.keys(speeds).forEach(i => {
 								fans[Object.keys(fans)[i]] = speeds[i];
 							});
+            }
 
 						this.currentPreset = index;
 					},
@@ -649,7 +666,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
 
 						const fans = Alpine.store('fans').fans;
 
-						const res = await fetch('<?php echo $_SERVER['PHP_SELF']; ?>', {
+						const res = await fetch('<?= $_SERVER['PHP_SELF']; ?>', {
 							method: 'POST',
 							body: JSON.stringify({ action: 'fans', fans }),
 						});
